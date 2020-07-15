@@ -2,27 +2,30 @@
 #include <opencv2/opencv.hpp>
 #include <math.h>
 #include <stdio.h>
-#include <unistd.h>
+#include <stdlib.h>
 
 #define PI 3.1415926
-#define COLOR_BIN_WIDTH 15 // the with of RGB color bin
-#define MEAN_SHIFT_MAX_ITER 50
-#define EPSILON 0.0001
-#define TOTAL_COLOR_BIN_NUM ((255 / COLOR_BIN_WIDTH) * 3) // assume RGB
-#define CONVERT_RED_TO_BIN_INDEX(x) (x / COLOR_BIN_WIDTH + 2 * (255 / COLOR_BIN_WIDTH))
-#define CONVERT_GREEN_TO_BIN_INDEX(x) (x / COLOR_BIN_WIDTH + (255 / COLOR_BIN_WIDTH))
+#define COLOR_BIN_WIDTH 30 // the with of RGB color bin
+#define MEAN_SHIFT_MAX_ITER 10
+#define EPSILON 0.000001
+#define TOTAL_COLOR_BIN_NUM ((255 / COLOR_BIN_WIDTH + 1) * 3) // assume RGB
+#define CONVERT_RED_TO_BIN_INDEX(x) (x / COLOR_BIN_WIDTH + 2 * (255 / COLOR_BIN_WIDTH + 1))
+#define CONVERT_GREEN_TO_BIN_INDEX(x) (x / COLOR_BIN_WIDTH + (255 / COLOR_BIN_WIDTH + 1))
 #define CONVERT_BLUE_TO_BIN_INDEX(x) (x / COLOR_BIN_WIDTH)
 
 using namespace cv;
 
-double gaussian_kernel_profile(double x)
+double epan_kernel_profile(double x)
 {
-    return 1.0 / (2 * PI) * exp(-0.5 * x);
+    if (abs(x) <= 1.0)
+        return 1 - x;
+    else
+        return 0;
 }
 
-double gradient(double x)
+double norm_distance(int x1, int x2, int y1, int y2, int h1, int h2)
 {
-    return 1.0 / (4 * PI) * exp(-0.5 * x);
+    return sqrt(pow((x1 - y1) * 2.0 / h1, 2) + pow((x2 - y2) * 2.0 / h2, 2));
 }
 
 /**
@@ -32,53 +35,29 @@ double gradient(double x)
 double *calc_p(Mat img, int center_pos_row, int center_pos_col, int row_window_size, int col_window_size)
 {
     // assume image is RGB 3 color
-    double *res = new double[TOTAL_COLOR_BIN_NUM * 2];
-    for (int i = 0; i < TOTAL_COLOR_BIN_NUM * 2; ++i)
+    double *res = new double[TOTAL_COLOR_BIN_NUM];
+    for (int i = 0; i < TOTAL_COLOR_BIN_NUM; ++i)
         res[i] = 0;
-    int row_low = center_pos_row - row_window_size;
-    int row_high = center_pos_row + row_window_size;
-    int col_low = center_pos_col - col_window_size;
-    int col_high = center_pos_col + col_window_size;
+    int row_low = MAX(0, center_pos_row - row_window_size);
+    int row_high = MIN(center_pos_row + row_window_size, img.rows);
+    int col_low = MAX(0, center_pos_col - col_window_size);
+    int col_high = MIN(center_pos_col + col_window_size, img.cols);
 
-    row_low = MAX(0, row_low);
-    row_high = MIN(row_high, img.rows);
-    col_low = MAX(0, col_low);
-    col_high = MIN(col_high, img.cols);
+    double norm = 0;
 
-    for (int row = row_low; row < row_high; ++row)
+    for (int i = row_low; i < row_high; ++i)
     {
-        int r = (int)img.at<Vec3b>(row, center_pos_col)[2], g = (int)img.at<Vec3b>(row, center_pos_col)[1], b = (int)img.at<Vec3b>(row, center_pos_col)[0];
-        res[CONVERT_RED_TO_BIN_INDEX(r)] += gaussian_kernel_profile(pow((row - center_pos_row) * 2.0 / row_window_size, 2));
-        res[CONVERT_GREEN_TO_BIN_INDEX(g)] += gaussian_kernel_profile(pow((row - center_pos_row) * 2.0 / row_window_size, 2));
-        res[CONVERT_BLUE_TO_BIN_INDEX(b)] += gaussian_kernel_profile(pow((row - center_pos_row) * 2.0 / row_window_size, 2));
-    }
-
-    for (int col = col_low; col < col_high; col++)
-    {
-        int r = (int)img.at<Vec3b>(center_pos_row, col)[2], g = (int)img.at<Vec3b>(center_pos_row, col)[1], b = (int)img.at<Vec3b>(center_pos_row, col)[0];
-        res[TOTAL_COLOR_BIN_NUM + CONVERT_RED_TO_BIN_INDEX(r)] += gaussian_kernel_profile(pow((col - center_pos_col) * 2.0 / col_window_size, 2));
-        res[TOTAL_COLOR_BIN_NUM + CONVERT_GREEN_TO_BIN_INDEX(g)] += gaussian_kernel_profile(pow((col - center_pos_col) * 2.0 / col_window_size, 2));
-        res[TOTAL_COLOR_BIN_NUM + CONVERT_BLUE_TO_BIN_INDEX(b)] += gaussian_kernel_profile(pow((col - center_pos_col) * 2.0 / col_window_size, 2));
-    }
-
-    double norm_sum = 0;
-    for (int i = 0; i < TOTAL_COLOR_BIN_NUM; ++i)
-    {
-        norm_sum += res[i];
+        for (int j = col_low; j < col_high; ++j)
+        {
+            int b = (int)img.at<Vec3b>(i, j)[0], g = (int)img.at<Vec3b>(i, j)[1], r = (int)img.at<Vec3b>(i, j)[2];
+            res[CONVERT_BLUE_TO_BIN_INDEX(b)] += epan_kernel_profile(norm_distance(i, j, center_pos_row, center_pos_col, row_window_size, col_window_size));
+            res[CONVERT_GREEN_TO_BIN_INDEX(g)] += epan_kernel_profile(norm_distance(i, j, center_pos_row, center_pos_col, row_window_size, col_window_size));
+            res[CONVERT_RED_TO_BIN_INDEX(r)] += epan_kernel_profile(norm_distance(i, j, center_pos_row, center_pos_col, row_window_size, col_window_size));
+            norm += epan_kernel_profile(norm_distance(i, j, center_pos_row, center_pos_col, row_window_size, col_window_size)) * 3;
+        }
     }
     for (int i = 0; i < TOTAL_COLOR_BIN_NUM; ++i)
-    {
-        res[i] /= norm_sum;
-    }
-    norm_sum = 0;
-    for (int i = TOTAL_COLOR_BIN_NUM; i < 2 * TOTAL_COLOR_BIN_NUM; ++i)
-    {
-        norm_sum += res[i];
-    }
-    for (int i = TOTAL_COLOR_BIN_NUM; i < 2 * TOTAL_COLOR_BIN_NUM; ++i)
-    {
-        res[i] /= norm_sum;
-    }
+        res[i] /= norm;
     return res;
 }
 
@@ -89,64 +68,36 @@ double *calc_q(Mat img, int center_pos_row, int center_pos_col, int row_window_s
 
 /**
  * Calculating the row and col bhat coefficient
- * @param row_coef  return value , the bhat coefficient of row pixles
- * @param col_coef return value, the bhat coefficient of col pixels
  */
-void bhatt_coefficient(double *colr_p, double *model_q, double &row_coef, double &col_coef)
+double bhatt_coefficient(double *colr_p, double *model_q)
 {
-    row_coef = 0;
-    col_coef = 0;
+    double coef = 0;
     for (int i = 0; i < TOTAL_COLOR_BIN_NUM; ++i)
-    {
-        row_coef += sqrt(colr_p[i] * model_q[i] * 10000);
-    }
-    row_coef /= 100;
-    for (int i = TOTAL_COLOR_BIN_NUM; i < 2 * TOTAL_COLOR_BIN_NUM; ++i)
-    {
-        col_coef += sqrt(colr_p[i] * model_q[i] * 10000);
-    }
-    col_coef /= 100;
+        coef += sqrt(colr_p[i] * model_q[i]);
+    return coef;
 }
 
 /**
  * The weight for one pixel
  */
-double weight(Vec3b pixel_colors, double *colr_p, double *model_q, int dim = 0)
+double weight(Vec3b pixel, double *colr_p, double *mode_q)
 {
+    int b = (int)pixel[0], g = (int)pixel[1], r = (int)pixel[2];
     double w = 0;
-    int r = (int)pixel_colors[2], g = (int)pixel_colors[1], b = (int)pixel_colors[0];
-    if (model_q[CONVERT_RED_TO_BIN_INDEX(r) + dim * TOTAL_COLOR_BIN_NUM] < EPSILON)
-    {
-        if (colr_p[CONVERT_RED_TO_BIN_INDEX(r) + dim * TOTAL_COLOR_BIN_NUM] < EPSILON)
-            w += 1;
-    }
+    int b_bin = CONVERT_BLUE_TO_BIN_INDEX(b), g_bin = CONVERT_GREEN_TO_BIN_INDEX(g), r_bin = CONVERT_RED_TO_BIN_INDEX(r);
+    if (colr_p[b_bin] > 0)
+        w += sqrt(mode_q[b_bin] / colr_p[b_bin]);
     else
-    {
-        if (colr_p[CONVERT_RED_TO_BIN_INDEX(r) + dim * TOTAL_COLOR_BIN_NUM] > EPSILON)
-            w += sqrt(model_q[CONVERT_RED_TO_BIN_INDEX(r) + dim * TOTAL_COLOR_BIN_NUM] / colr_p[CONVERT_RED_TO_BIN_INDEX(r) + dim * TOTAL_COLOR_BIN_NUM]);
-    }
+        w += sqrt(mode_q[b_bin] / EPSILON);
+    if (colr_p[g_bin] > 0)
+        w += sqrt(mode_q[g_bin] / colr_p[g_bin]);
+    else
+        w += sqrt(mode_q[g_bin] / EPSILON);
+    if (colr_p[r_bin] > 0)
+        w += sqrt(mode_q[r_bin] / colr_p[r_bin]);
+    else
+        w += sqrt(mode_q[r_bin] / EPSILON);
 
-    if (model_q[CONVERT_GREEN_TO_BIN_INDEX(g) + dim * TOTAL_COLOR_BIN_NUM] < EPSILON)
-    {
-        if (colr_p[CONVERT_GREEN_TO_BIN_INDEX(g) + dim * TOTAL_COLOR_BIN_NUM] < EPSILON)
-            w += 1;
-    }
-    else
-    {
-        if (colr_p[CONVERT_GREEN_TO_BIN_INDEX(g) + dim * TOTAL_COLOR_BIN_NUM] > EPSILON)
-            w += sqrt(model_q[CONVERT_GREEN_TO_BIN_INDEX(g) + dim * TOTAL_COLOR_BIN_NUM] / colr_p[CONVERT_GREEN_TO_BIN_INDEX(g) + dim * TOTAL_COLOR_BIN_NUM]);
-    }
-
-    if (model_q[CONVERT_BLUE_TO_BIN_INDEX(b) + dim * TOTAL_COLOR_BIN_NUM] < EPSILON)
-    {
-        if (colr_p[CONVERT_BLUE_TO_BIN_INDEX(b) + dim * TOTAL_COLOR_BIN_NUM] < EPSILON)
-            w += 1;
-    }
-    else
-    {
-        if (colr_p[CONVERT_BLUE_TO_BIN_INDEX(b) + dim * TOTAL_COLOR_BIN_NUM] > EPSILON)
-            w += sqrt(model_q[CONVERT_BLUE_TO_BIN_INDEX(b) + dim * TOTAL_COLOR_BIN_NUM] / colr_p[CONVERT_BLUE_TO_BIN_INDEX(b) + dim * TOTAL_COLOR_BIN_NUM]);
-    }
     return w;
 }
 
@@ -165,38 +116,22 @@ Vec2i new_loc_z(Mat img, int center_pos_row, int center_pos_col, int row_window_
     col_low = MAX(0, col_low);
     col_high = MIN(col_high, img.cols);
 
-    double nu_row = 0, nu_col = 0, de_row = 0, de_col = 0;
-    printf("\t ---- center row = %d\n", center_pos_row);
-    printf("\t color p = \n");
-    for (int i = 0; i < TOTAL_COLOR_BIN_NUM; ++i)
+    Vec2i new_pos;
+    double den1 = 0, den2 = 0, ne1 = 0, ne2 = 0;
+
+    for (int i = row_low; i < row_high; ++i)
     {
-        printf("%lf\t", colr_p[i]);
+        for (int j = col_low; j < col_high; ++j)
+        {
+            den1 += weight(img.at<Vec3b>(i, j), colr_p, model_q);
+            den2 += weight(img.at<Vec3b>(i, j), colr_p, model_q);
+            ne1 += i * weight(img.at<Vec3b>(i, j), colr_p, model_q);
+            ne2 += j * weight(img.at<Vec3b>(i, j), colr_p, model_q);
+        }
     }
-    printf("\n\nmodel q = \n");
-    for (int i = 0; i < TOTAL_COLOR_BIN_NUM; i++)
-    {
-        printf("%lf\t", model_q[i]);
-    }
-    printf("\n\n");
-    for (int row = row_low; row < row_high; ++row)
-    {
-        printf("\t ---- weight of row %d = %lf, gradient =%lf, model q r=%lf, g=%lf,b=%lf, colr p r=%lf, g=%lf, b=%lf\n",
-               row, weight(img.at<Vec3b>(row, center_pos_col), colr_p, model_q), gradient(pow((row - center_pos_row) * 1.0 / row_window_size, 2)),
-               model_q[CONVERT_RED_TO_BIN_INDEX(img.at<Vec3b>(row, center_pos_col)[2])],
-               model_q[CONVERT_GREEN_TO_BIN_INDEX(img.at<Vec3b>(row, center_pos_col)[1])],
-               model_q[CONVERT_BLUE_TO_BIN_INDEX(img.at<Vec3b>(row, center_pos_col)[0])],
-               colr_p[CONVERT_RED_TO_BIN_INDEX(img.at<Vec3b>(row, center_pos_col)[2])],
-               colr_p[CONVERT_GREEN_TO_BIN_INDEX(img.at<Vec3b>(row, center_pos_col)[1])],
-               colr_p[CONVERT_BLUE_TO_BIN_INDEX(img.at<Vec3b>(row, center_pos_col)[0])]);
-        nu_row += weight(img.at<Vec3b>(row, center_pos_col), colr_p, model_q) * gradient(pow((row - center_pos_row) * 2.0 / row_window_size, 2)) * row;
-        de_row += weight(img.at<Vec3b>(row, center_pos_col), colr_p, model_q) * gradient(pow((row - center_pos_row) * 2.0 / row_window_size, 2));
-    }
-    for (int col = col_low; col < col_high; ++col)
-    {
-        nu_col += weight(img.at<Vec3b>(center_pos_row, col), colr_p, model_q, 1) * gradient(pow((col - center_pos_col) * 2.0 / col_window_size, 2)) * col;
-        de_col += weight(img.at<Vec3b>(center_pos_row, col), colr_p, model_q, 1) * gradient(pow((col - center_pos_col) * 2.0 / col_window_size, 2));
-    }
-    return Vec2i((int)round(nu_row / de_row), (int)round(nu_col / de_col));
+    new_pos[0] = (int)(ne1 / den1);
+    new_pos[1] = (int)(ne2 / den2);
+    return new_pos;
 }
 
 /**
@@ -209,88 +144,44 @@ Vec2i new_loc_z(Mat img, int center_pos_row, int center_pos_col, int row_window_
  */
 Vec2i mean_shift_track_update(Mat img, double *mode_q, int prev_pos_row, int prev_pos_col, int row_window_size, int col_window_size)
 {
-    Vec2i ans_pos(0, 0);
-
-    // update row position
     for (int epoch = 0; epoch < MEAN_SHIFT_MAX_ITER; ++epoch)
     {
-        double *colr_p = calc_p(img, prev_pos_row, prev_pos_col, row_window_size, col_window_size);
-        double prev_row_coef = 0, prev_col_coef = 0;
-        bhatt_coefficient(colr_p, mode_q, prev_row_coef, prev_col_coef);
-        Vec2i loc_z = new_loc_z(img, prev_pos_row, prev_pos_col, row_window_size, col_window_size, colr_p, mode_q);
+        double *prev_colr_p = calc_p(img, prev_pos_row, prev_pos_col, row_window_size, col_window_size);
+        Vec2i new_pos = new_loc_z(img, prev_pos_row, prev_pos_col, row_window_size, col_window_size, prev_colr_p, mode_q);
+        double *new_colr_p = calc_p(img, new_pos[0], new_pos[1], row_window_size, col_window_size);
 
-        double *colr_p_z = calc_p(img, loc_z[0], loc_z[1], row_window_size, col_window_size);
-        double z_row_coef = 0, z_col_coef = 0;
-        bhatt_coefficient(colr_p_z, mode_q, z_row_coef, z_col_coef);
-        printf("\t new row pos = %d, prev row pos=%d, coef new=%lf, coef prev=%lf\n", loc_z[0], prev_pos_row, z_row_coef, prev_row_coef);
-        printf("\t prev color p=\n");
+        double prev_bhat = bhatt_coefficient(prev_colr_p, mode_q), new_bhat = bhatt_coefficient(new_colr_p, mode_q);
+
+        printf("\t prev pos=(%d, %d), new_pos=(%d,%d), prev coef=%lf, new coef=%lf\n", prev_pos_row, prev_pos_col, new_pos[0], new_pos[1], prev_bhat, new_bhat);
+        printf("--prev colr_p=\n");
         for (int i = 0; i < TOTAL_COLOR_BIN_NUM; ++i)
-            printf("%lf\t", colr_p[i]);
-        printf("\n\n new colr z p=\n");
+            printf("%lf\t", prev_colr_p[i]);
+        printf("\n\n\t new color p=\n");
         for (int i = 0; i < TOTAL_COLOR_BIN_NUM; ++i)
-            printf("%lf\t", colr_p_z[i]);
-        printf("\n");
-        delete[] colr_p;
-        // update row and col position
-        while (z_row_coef < prev_row_coef)
+            printf("%lf\t", new_colr_p[i]);
+        printf("\n\n\t mode q=\n");
+        for (int i = 0; i < TOTAL_COLOR_BIN_NUM; ++i)
+            printf("%lf\t", mode_q[i]);
+        printf("\n\n");
+        delete[] prev_colr_p;
+        delete[] new_colr_p;
+        while (new_bhat < prev_bhat)
         {
-            loc_z[0] = (loc_z[0] + prev_pos_row) / 2;
-            if (abs(loc_z[0] - prev_pos_row) <= 1)
+            new_pos[0] = (int)round((new_pos[0] + prev_pos_row) / 2.0);
+            new_pos[1] = (int)round((new_pos[1] + prev_pos_col) / 2.0);
+
+            if (abs(new_pos[0] - prev_pos_row) <= 1 && abs(new_pos[1] - prev_pos_col) <= 1)
                 break;
-            delete[] colr_p_z;
-            colr_p_z = calc_p(img, loc_z[0], loc_z[1], row_window_size, col_window_size);
-            bhatt_coefficient(colr_p_z, mode_q, z_row_coef, z_col_coef);
-            printf("\t  while update, loc z new=(%d,%d), coef new=%lf, prev_coef=%lf\n", loc_z[0], loc_z[1], z_row_coef, prev_row_coef);
+            new_colr_p = calc_p(img, new_pos[0], new_pos[1], row_window_size, col_window_size);
+            new_bhat = bhatt_coefficient(new_colr_p, mode_q);
+            delete[] new_colr_p;
         }
-        delete[] colr_p_z;
-        if (abs(loc_z[0] - prev_pos_row) <= 1)
-        {
-            ans_pos[0] = prev_pos_row;
-            loc_z[0] = prev_pos_row;
-            break;
-        }
-        else
-        {
-            prev_pos_row = loc_z[0];
-        }
+
+        if (abs(new_pos[0] - prev_pos_row) <= 1 && abs(new_pos[1] - prev_pos_col) <= 1)
+            return new_pos;
+        prev_pos_row = new_pos[0];
+        prev_pos_col = new_pos[1];
     }
-
-    // update col position
-    for (int epoch = 0; epoch < MEAN_SHIFT_MAX_ITER; ++epoch)
-    {
-        double *colr_p = calc_p(img, prev_pos_row, prev_pos_col, row_window_size, col_window_size);
-        double tmp = 0, prev_col_coef = 0;
-        bhatt_coefficient(colr_p, mode_q, tmp, prev_col_coef);
-        Vec2i loc_z = new_loc_z(img, prev_pos_row, prev_pos_col, row_window_size, col_window_size, colr_p, mode_q);
-
-        double *colr_p_z = calc_p(img, loc_z[0], loc_z[1], row_window_size, col_window_size);
-        double z_col_coef = 0;
-        bhatt_coefficient(colr_p_z, mode_q, tmp, z_col_coef);
-        printf("\t new col pos=%d, prev col pos=%d, new col coef=%lf. prev col coef=%lf\n", loc_z[1], prev_pos_col, z_col_coef, prev_col_coef);
-        delete[] colr_p;
-
-        while (z_col_coef < prev_col_coef)
-        {
-            loc_z[1] = (loc_z[1] + prev_pos_col) / 2;
-            if (abs(loc_z[1] - prev_pos_col) <= 1)
-                break;
-            delete[] colr_p_z;
-            colr_p_z = calc_p(img, loc_z[0], loc_z[1], row_window_size, col_window_size);
-            bhatt_coefficient(colr_p_z, mode_q, tmp, z_col_coef);
-        }
-        delete[] colr_p_z;
-        if (abs(loc_z[1] - prev_pos_col) <= 1)
-        {
-            ans_pos[1] = prev_pos_col;
-            loc_z[1] = prev_pos_col;
-            break;
-        }
-        else
-        {
-            prev_pos_col = loc_z[1];
-        }
-    }
-    return ans_pos;
 }
 
 /**
@@ -314,7 +205,7 @@ Mat img_norm_color(Mat img)
     return img;
 }
 
-void generate_pngs(char *video_name = (char *)"mot.avi", int step = 5)
+void generate_pngs(char *video_name = (char *)"mot.avi", int max_count = 40, int step = 1)
 {
     VideoCapture capture(video_name);
     Mat frame;
@@ -331,12 +222,14 @@ void generate_pngs(char *video_name = (char *)"mot.avi", int step = 5)
         }
         capture >> frame;
         count++;
+        if (count > max_count)
+            break;
     }
 }
 
 int main(int argc, char const *argv[])
 {
-    const int num_frames = 20;
+    const int num_frames = 1;
     char *frame_names[num_frames];
     for (int i = 0; i < num_frames; ++i)
     {
@@ -351,7 +244,7 @@ int main(int argc, char const *argv[])
         // frames[i] =img_norm_color(frames[i]);
     }
 
-    int center_row = 260, center_col = 250, row_width = 50, col_width = 50;
+    int center_row = 300, center_col = 710, row_width = 100, col_width = 35;
     double *target_mode_q = calc_q(frames[0], center_row, center_col, row_width, col_width);
     Vec2i center_loc(center_row, center_col);
     for (int i = 0; i < num_frames; ++i)
@@ -365,11 +258,9 @@ int main(int argc, char const *argv[])
         {
             for (int col = center_loc[1] - col_width; col < center_loc[1] + col_width; ++col)
             {
-                // newframe.at<Vec3b>(row, col) = Vec3b(0, 0, 0);
                 newframe.at<Vec3b>(row, col)[0] = 255;
             }
         }
-        if (i > 18)
             imshow(nm, newframe);
         delete[] nm;
     }
