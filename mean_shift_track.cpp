@@ -1,4 +1,9 @@
-// Mean shift for video tracking
+/** Mean shift for video tracking
+ * ********************************
+ *  THIS FILE IS DEPRECATED
+ * *********************************
+ */
+
 #include <opencv2/opencv.hpp>
 #include <math.h>
 #include <stdio.h>

@@ -23,4 +23,6 @@ The GIF below display an example for tracking object in video. At the beginning,
 
 This project may be slow, since the demo's input video size is big, thus is slow when running. And some special cases, such as the target  is occluded for a period of time, some very likely area nearby may distract the algorithm and lost the target. Some better policies may be needed for solving this cases.
 
+The file `mean_shift_track.cpp` is deprecated, please refer to `mst.cpp`.
+
 ![demo](./demo_show.gif)
